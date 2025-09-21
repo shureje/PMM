@@ -20,7 +20,7 @@ int main() {
     setlocale(LC_ALL, "ru.utf-8");
 
     double L = 1.0;
-    double TimeMax = 0.1;
+    double TimeMax = 1;
     double alpha = 1.0;
     int N = 101;
     int M = 1000;
