@@ -7,18 +7,51 @@
 
 using namespace std;
 
+class Source {
+    public:
+        int nx, ny;
+        int x_start, x_end, y_start, y_end;
+        double Q, u, v;
+        vector<vector<double>> q;
+
+    public:
+        Source(int nx, int ny, int x_start, int x_end, int y_start, int y_end, double Q)
+            : nx(nx), ny(ny), x_start(x_start), x_end(x_end), y_start(y_start), y_end(y_end), Q(Q) {
+            q.resize(nx, vector<double>(ny, 0.0));
+
+            for (int i = x_start; i <= x_end; i++) {
+                for (int j = y_start; j <= y_end; j++) {
+                    q[i][j] = Q;
+                }
+            }
+        }
+
+        Source(int nx, int ny, int x_start, int x_end, int y_start, int y_end, double Q, double u, double v)
+            : nx(nx), ny(ny), x_start(x_start), x_end(x_end), y_start(y_start), y_end(y_end), Q(Q), u(u), v(v) {
+            q.resize(nx, vector<double>(ny, 0.0));
+
+            for (int i = x_start; i <= x_end; i++) {
+                for (int j = y_start; j <= y_end; j++) {
+                    q[i][j] = Q;
+                }
+            }
+        }
+
+};
+
 class Transport2D {
 private:
     int nx, ny;
     double dx, dy, dt;
-    double D, alpha, Q;
+    double D, alpha;
     vector<vector<double>> rho, rho_new;
     vector<vector<double>> u, v;
+    vector<Source> sources;
     ofstream output_file;
 
 public:
-    Transport2D(int nx, int ny, double Lx, double Ly, double D, double alpha, double Q) 
-        : nx(nx), ny(ny), D(D), alpha(alpha), Q(Q) {
+    Transport2D(int nx, int ny, double Lx, double Ly, double D, double alpha, vector<Source> Sources) 
+        : nx(nx), ny(ny), D(D), alpha(alpha) {
         dx = Lx / (nx - 1);
         dy = Ly / (ny - 1);
         
@@ -26,8 +59,7 @@ public:
         rho_new.resize(nx, vector<double>(ny, 0.0));
         u.resize(nx, vector<double>(ny, 0.0));
         v.resize(nx, vector<double>(ny, 0.0));
-        
-        dt = 0.25 *  min(dx*dx/(2*D), dy*dy/(2*D));
+        this->sources = Sources;
 
         output_file.open("transport_data.dat");
     }
@@ -46,18 +78,24 @@ public:
             }
         }
     }
-    
-    void setInitialCondition() {
-        double x0 = nx/2.0, y0 = ny/2.0;
-        double sigma = 5.0;
+
+    // void calculateTimeStep() {
+    //     dt = min(0.25 * min(dx*dx/(2*D), dy*dy/(2*D)), 0.25 * min(dx/max(1.0, 1.0), dy/max(0.5, 1.0)));
+    // }
+
+    void calculateTimeStep() {
+        double max_u = 1.0, max_v = 0.5;
         
-        for(int i = 0; i < nx; i++) {
-            for(int j = 0; j < ny; j++) {
-                double r2 = (i-x0)*(i-x0) + (j-y0)*(j-y0);
-                rho[i][j] = exp(-r2/(2*sigma*sigma));
-            }
+        // Учитываем скорости всех источников
+        for(const auto& source : sources) {
+            max_u = max(max_u, abs(1.0 + source.u));
+            max_v = max(max_v, abs(0.5 + source.v));
         }
+        
+        dt = min(0.25 * min(dx*dx/(2*D), dy*dy/(2*D)), 
+                0.25 * min(dx/max_u, dy/max_v));
     }
+
     
     void timeStep() {
 
@@ -69,22 +107,38 @@ public:
         for(int i = 1; i < nx-1; i++) {
             for(int j = 1; j < ny-1; j++) {
                 double adv_x, adv_y;
-                if(u[i][j] > 0) {
-                    adv_x = -u[i][j] * (rho[i][j] - rho[i-1][j]) / dx;
+                double u_eff = u[i][j];
+                double v_eff = v[i][j];
+
+                for(const auto& source : sources) {
+                if(i >= source.x_start && i <= source.x_end && 
+                    j >= source.y_start && j <= source.y_end) {
+                        u_eff += source.u;
+                        v_eff += source.v;
+                        break;
+                    }
+                }
+
+
+                if(u_eff > 0) {
+                    adv_x = -u_eff * (rho[i][j] - rho[i-1][j]) / dx;
                 } else {
-                    adv_x = -u[i][j] * (rho[i+1][j] - rho[i][j]) / dx;
+                    adv_x = -u_eff * (rho[i+1][j] - rho[i][j]) / dx;
                 }
                 
-                if(v[i][j] > 0) {
-                    adv_y = -v[i][j] * (rho[i][j] - rho[i][j-1]) / dy;
+                if(v_eff > 0) {
+                    adv_y = -v_eff * (rho[i][j] - rho[i][j-1]) / dy;
                 } else {
-                    adv_y = -v[i][j] * (rho[i][j+1] - rho[i][j]) / dy;
+                    adv_y = -v_eff * (rho[i][j+1] - rho[i][j]) / dy;
                 }
                 
                 double diff_x = D * (rho[i+1][j] - 2*rho[i][j] + rho[i-1][j]) / (dx*dx);
                 double diff_y = D * (rho[i][j+1] - 2*rho[i][j] + rho[i][j-1]) / (dy*dy);
                 
-                rho_new[i][j] = rho[i][j] + dt * (adv_x + adv_y + diff_x + diff_y + Q - alpha*rho[i][j]);
+                rho_new[i][j] = rho[i][j] + dt * (adv_x + adv_y + diff_x + diff_y  - alpha*rho[i][j]);
+                for (int k = 0; k < sources.size();k++) {     
+                    rho_new[i][j] += dt * sources[k].q[i][j];
+                }
             }
         }
         
@@ -115,19 +169,28 @@ public:
 int main() {
     int nx = 100, ny = 100;
     double Lx = 10.0, Ly = 10.0;
-    double D = 0.1, alpha = 0.01, Q = 0.0;
+    double D = 0.1, alpha = 0.001;
+    int steps = 1000;
+    Source source1 = Source(nx, ny, 43, 50, 20, 25, 3.0, -3, -1);
+
+    Source source2 = Source(nx, ny, 66, 68, 52, 54, 5.0, -2, -3);
+
+    Source source3 = Source(nx, ny, 52, 56, 46, 50, -3.0, -1, -0.5);
+    Source source4 = Source(nx, ny, 10, 15, 70, 75, 2.5, 4, 2);
+    Source source5 = Source(nx, ny, 80, 85, 10, 15, -1.5, -3, 2);
+    Source source6 = Source(nx, ny, 25, 30, 80, 85, 4.0, 1, -3);
     
-    Transport2D solver(nx, ny, Lx, Ly, D, alpha, Q);
-    solver.setVelocity(1.0, 0.5);
-    solver.setInitialCondition();
+    vector<Source> sources = {source1, source2, source3, source4, source5, source6};
     
-    for(int step = 0; step <= 100; step++) {
+    Transport2D solver(nx, ny, Lx, Ly, D, alpha, sources);
+    solver.setVelocity(-0.5, -2);
+    solver.calculateTimeStep();
+    
+    for(int step = 0; step <= steps; step++) {
         solver.saveData(step);
-        if(step % 1 == 0) {
-            cout << "Step " << step << " saved\n";
-        }
         solver.timeStep();
+        
     }
-    
+    cout << "end" << endl;
     return 0;
 }

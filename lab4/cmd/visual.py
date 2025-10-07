@@ -34,13 +34,11 @@ def load_all_data():
 def create_animation():
     data = load_all_data()
     
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(6, 6))
     
     def animate(frame):
         ax.clear()
         x, y, rho = data[frame]
-        
-        print(f"Frame {frame}: min={np.min(rho):.6f}, max={np.max(rho):.6f}")
         
         im = ax.contourf(x, y, rho, levels=50, cmap='viridis')
         ax.set_xlabel('x')
