@@ -2,107 +2,95 @@
 #include <vector>
 #include <fstream>
 #include <cmath>
-#include <corecrt_math_defines.h>
 
+using namespace std;
 
 class NonlinearHeatSolver {
 private:
-    double L, T, beta;
+    double L, dt, T_max, k0, beta;
     int N, M;
-    double h, tau;
-    std::vector<double> x, u_curr, u_next;
+    double h;
+    vector<double> x, T_old, T_new;
+    
+
     
 public:
-    NonlinearHeatSolver(double L_, double T_, int N_, int M_, double beta_) 
-        : L(L_), T(T_), N(N_), M(M_), beta(beta_) {
+    NonlinearHeatSolver(double L_, int N_, int M_, double T_max_, double k0_, double beta_) 
+        : L(L_), N(N_), M(M_), T_max(T_max_), k0(k0_), beta(beta_) {
         h = L / (N - 1);
-        tau = T / M;
+        dt = T_max / M;
         x.resize(N);
-        u_curr.resize(N);
-        u_next.resize(N);
+        T_old.resize(N);
+        T_new.resize(N);
         for (int i = 0; i < N; i++) {
             x[i] = i * h;
         }
     }
-    
-    double k(double u) {
-        double kappa0 = 1.0;
-        double beta = 2.0;
-        return kappa0 * pow(fabs(u) + 1e-6, beta);
-    }
-    
-    double source(double x, double t, double u) {
-        return 0.0;
-    }
-    
-    void setInitialConditions() {
-        double xi0 = 0.5;
-        for (int i = 0; i < N; i++) {
-            if (x[i] < xi0) {
-                u_curr[i] = pow(xi0 - x[i], 1.0/beta);  
-            } else {
-                u_curr[i] = 0.0;
-            }
-        }
-    }
-    
-    void setBoundaryConditions(double t) {
-        u_next[0] = u_next[1];
-        u_next[N-1] = u_next[N-2];
-    }
-    
-    void timeStep(double t) {
-        for (int i = 1; i < N-1; i++) {
-            double k_right = k((u_curr[i] + u_curr[i+1]) / 2.0);
-            double k_left = k((u_curr[i-1] + u_curr[i]) / 2.0);
-            double diff_term = (k_right * (u_curr[i+1] - u_curr[i]) - 
-                               k_left * (u_curr[i] - u_curr[i-1])) / (h * h);
-            double src = source(x[i], t, u_curr[i]);
-            u_next[i] = u_curr[i] + tau * (diff_term + src);
-        }
-        setBoundaryConditions(t + tau);
-        u_curr = u_next;
-    }
-    
-    bool checkStability() {
-        double max_k = 0.0;
-        for (int i = 0; i < N; i++) {
-            max_k = std::max(max_k, k(u_curr[i]));
-        }
-        return tau <= h * h / (2.0 * max_k);
+
+    double k(double T) {
+        if (T <= 0) return 1e-10;
+        double k_val = k0 * pow(T, beta);
+        return min(k_val, 2.0);  // ограничение коэф. теплопроводности
     }
     
     void solve() {
-        setInitialConditions();
-        if (!checkStability()) {
-            std::cout << "Warning: stability condition may be violated!" << std::endl;
+        // Начальное условие T(x,0) = 0
+        for (int i = 0; i < N; i++) {
+            T_old[i] = 0.1;
+        }
+        
+        double max_k = k0 * pow(1.0, beta);
+        double stability = max_k * dt / (h * h);
+        cout << "Число устойчивости: " << stability << " (должно быть < 0.5)" << endl;
+        
+        if (stability >= 0.5) {
+            cout << "ВНИМАНИЕ: Схема неустойчива! Уменьшите dt или увеличьте h" << endl;
             return;
         }
-        std::ofstream file("solution.dat");
-        for (int i = 0; i < N; i++) {
-            file << x[i] << " " << 0.0 << " " << u_curr[i] << std::endl;
-        }
+        
+        ofstream file("solution.dat");
+        
         for (int n = 0; n < M; n++) {
-            double t = n * tau;
-            timeStep(t);
-            if (n % (M/10) == 0) {
-                for (int i = 0; i < N; i++) {
-                    file << x[i] << " " << t + tau << " " << u_curr[i] << std::endl;
-                }
+            double t = n * dt;
+            
+            for (int i = 1; i < N-1; i++) {
+                double k_left = 0.5 * (k(T_old[i]) + k(T_old[i-1]));
+                double k_right = 0.5 * (k(T_old[i]) + k(T_old[i+1]));
+                
+                double flux_left = k_left * (T_old[i] - T_old[i-1]) / h;
+                double flux_right = k_right * (T_old[i+1] - T_old[i]) / h;
+                
+                T_new[i] = T_old[i] + dt * (flux_right - flux_left) / h;
+                if (T_new[i] < 0) T_new[i] = 0.01;
             }
+            
+            // Граничное условие T_x(0,t) = -2
+            T_new[0] = T_new[1] + 2 * h;
+            T_new[N-1] = 1.0;
+            
+            for (int i = 0; i < N; i++) {
+                file << x[i] << " " << t << " " << T_new[i] << endl;
+            }
+            
+            T_old = T_new;
         }
+        
         file.close();
-        std::cout << "Solution saved to solution.dat" << std::endl;
+        cout << "Solution saved to solution.dat" << endl;
     }
 };
 
 int main() {
     double L = 1.0;
-    double T = 1.0;
-    double beta = 2.0;
-    int N = 101;
-    int M = 50000;
-    NonlinearHeatSolver solver(L, T, N, M, beta);
+    double T_max = 2;
+    double k0 = 1.0;
+    double beta = 1.2; // должно быть > 1
+    int N = 50;
+    int M = 20000;
+
+    setlocale(LC_ALL, "ru.utf-8");
+    
+    NonlinearHeatSolver solver(L, N, M, T_max, k0, beta);
     solver.solve();
     return 0;
 }
